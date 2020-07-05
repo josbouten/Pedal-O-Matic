@@ -1,52 +1,68 @@
+//
+// Control software for Arduino Uno/Nano for Pedal-O-Matic, a quad pedal to CV and midi interface.
+// Version 0.2
+
+// 5. July 2020
+// Author: J.S. Bouten aka Zaphod B
+//
+
+// In debug mode all leds are flashed and each second one of the pedal values 
+// is read and send to midi. 
+// Furthermore the corresponding blue led will flash. The controller
+// values will not change until you move change the angle of the 
+// corresponding foot pedal.
+//#define DEBUG
+
+
 // include the ResponsiveAnalogRead library
 #include <ResponsiveAnalogRead.h>
 
-#define VERSION "0.1"
 
-#define NUM_PEDALS 1
-#define PEDAL_PORT A0
+#define NUM_PEDALS 4
+#define PEDAL_BASE_PORT A0
 
 static int oldValue[NUM_PEDALS];
 
-// The thing that smartly smooths the input values.
+// The thing that smartly smoothens the input values.
 ResponsiveAnalogRead *analog[NUM_PEDALS];
 
-//#define DEBUG
-
-// Channel on which all controller values are sent.
+// Each foot pedal has its own midi channel. Define the base channel here.
 #define MIDI_BASE_CHANNEL 1 
-// Each pedal generates values for a controller starting with this controller number.
+
+// Each pedal uses its own controller number to generate controller values for. 
+// Define the base controller number here.
 #define CONTROLLER_BASE_NUMBER 20 
 
 // All green leds can be lit via D2.
+#define GREEN_LEDS 2
 // All yellow leds can be lit via D3.
-#define yellowLeds 3
-#define greenLeds 2
+#define YELLOW_LEDS 3
 
-// Assign blue LEDs to individual outputs D8, D9, D10 and D11.
-#define cntrLed0 8
-#define cntrLed1 9
-#define cntrLed2 10
-#define cntrLed3 11
+// Assign blue midi LEDs to individual outputs starting at D8.
+// Note, the ports are assumed to be consecutive!
+#define MIDI_LED_BASE_PORT 8
 
 // ADC
 // Convert 10 bit ADC value to midi value, i.e. forget about some of the LSB's
 #define BIT_SHIFT 3
 
+// FST interrupt counter
+volatile int counter = 0;
+
 void greenLedsOn() {
-  digitalWrite(greenLeds, LOW); // Switch leds on
+  digitalWrite(GREEN_LEDS, LOW); // Switch leds on
 }
 
 void greenLedsOff() {
-  digitalWrite(greenLeds, HIGH);  // Switch leds off
+  digitalWrite(GREEN_LEDS, HIGH);  // Switch leds off
 }
 
 void yellowLedsOn(){
-  digitalWrite(yellowLeds, HIGH); // Switch leds on
+  digitalWrite(YELLOW_LEDS, HIGH); // Switch leds on
 }
 
 void yellowLedsOff() {
-  digitalWrite(yellowLeds, LOW); // Switch leds off
+  digitalWrite(YELLOW_LEDS, LOW); // Switch leds off
 }
 
 // Some test code
@@ -72,7 +88,7 @@ void testAllLeds(int onDelayValue, int offDelayValue, bool runContinuously) {
   // 4 consecutive ports here!
   if (runContinuously == true) {
     while (true) {
-      for (int i = cntrLed0; i < cntrLed0 + NUM_PEDALS; i++) {
+      for (int i = MIDI_LED_BASE_PORT; i < MIDI_LED_BASE_PORT + NUM_PEDALS; i++) {
         flashCntrlLed(i, onDelayValue, offDelayValue);
         flashLevelLeds(offDelayValue, onDelayValue);
       }
@@ -80,9 +96,11 @@ void testAllLeds(int onDelayValue, int offDelayValue, bool runContinuously) {
   } 
   else // Run only once
   {
-    for (int i = cntrLed0; i < cntrLed0 + NUM_PEDALS; i++) {
-      flashCntrlLed(i, onDelayValue, offDelayValue);
-      flashLevelLeds(offDelayValue, onDelayValue);
+    for (int j = 0; j < 4; j++) {
+      for (int i = MIDI_LED_BASE_PORT; i < MIDI_LED_BASE_PORT + NUM_PEDALS; i++) {
+        flashCntrlLed(i, onDelayValue, offDelayValue);
+        flashLevelLeds(offDelayValue, onDelayValue);
+      }
     }
   }
 }
@@ -101,11 +119,9 @@ int readPedalWithSmoothing(int pedalPort, ResponsiveAnalogRead *rar)
 // MIDI
 
 void event2midi(int cmd, int data1, int data2) {
-#ifndef DEBUG
   Serial.write(cmd);
   Serial.write(data1);
   Serial.write(data2);
-#endif
 }
 
 // Play a controller message.
@@ -115,7 +131,7 @@ void generateEvent(byte channel, int controllerNr, int value) {
   // value      0x00 .. 0x65
   // channel    0x00 .. 0x0f
   // channel 1 corresponds to byte value 0xb0
-  int cmd = 0xb0 + channel;
+  int cmd = 0xb0 + channel - 1;
   event2midi(cmd, controllerNr, value);
 }
 
@@ -125,25 +141,75 @@ int map2midi(int newValue) {
   return (newValue >> BIT_SHIFT);
 }
 
+void prepareInterrupts(){
+  noInterrupts();                     
+
+  // Next the Timer1 is initialized.
+
+  TCCR1A = 0;
+  TCCR1B = 0;
+
+  // The preloader timer value is set (Initially as 3035).
+
+  TCNT1 = 3035;   
+ 
+
+  // Then the Pre scaler value is set in the TCCR1B register.
+
+  TCCR1B |= (1 << CS10);// |(1 << CS12);   
+
+  // The Timer overflow interrupt is enabled in the Timer Interrupt Mask register so that the ISR can be used.
+
+  TIMSK1 |= (1 << TOIE1);              
+
+  // At last all interrupts are enabled.
+
+  interrupts();                      
+}
+
+volatile int ind = 0;
+volatile int incr = 1;
+ISR(TIMER1_OVF_vect)                   
+{
+  //digitalWrite(MIDI_LED_BASE_PORT, digitalRead(cntrLed0) ^ 1); 
+  counter += 1;
+  switch(counter) {
+    case 0:
+      digitalWrite(MIDI_LED_BASE_PORT + ind, LOW);
+      ind += incr;
+      if ((ind > 3) || (ind < 0)) { 
+        incr = - incr;
+      }
+    break;
+//    case 50:
+//      digitalWrite(GREEN_LEDS, HIGH);
+//      break;
+//    case 75:
+//      digitalWrite(GREEN_LEDS, LOW);
+//      break;
+    case 100:
+      digitalWrite(MIDI_LED_BASE_PORT + ind, HIGH); 
+      counter = -1;
+    break;
+  }
+}
+
 // Setup
 
 void setup() {
-
   
   // Define outputs for blue LEDs that signal that a controller value is 
   // send via midi.
-  pinMode(cntrLed0, OUTPUT);
-  pinMode(cntrLed1, OUTPUT);
-  pinMode(cntrLed2, OUTPUT);
-  pinMode(cntrLed3, OUTPUT);
-  pinMode(yellowLeds, OUTPUT);
-  pinMode(greenLeds, OUTPUT);
+  for (int i = 0; i < NUM_PEDALS; i++){
+    pinMode(MIDI_LED_BASE_PORT + i, OUTPUT);
+  }
+  pinMode(YELLOW_LEDS, OUTPUT);
+  pinMode(GREEN_LEDS, OUTPUT);
   
   // All LEDs are LOW.
-  digitalWrite(cntrLed0, LOW); // Switch led off
-  digitalWrite(cntrLed1, LOW); // Switch led off
-  digitalWrite(cntrLed2, LOW); // Switch led off
-  digitalWrite(cntrLed3, LOW); // Switch led off
+  for (int i = 0; i < NUM_PEDALS; i++) {
+    digitalWrite(MIDI_LED_BASE_PORT + i, LOW); // Switch led off
+  }
   greenLedsOff();
   yellowLedsOff();
   // Run test flashing all leds once.
@@ -153,45 +219,53 @@ void setup() {
   // Create a smoothing device for every potentiometer.
   boolean sleepEnabled = true;
   float snapMultiplier = 0.01; // Increase this to lessen the amount of easing (0.0 ... 1.0).
-  for (int port = PEDAL_PORT; port < PEDAL_PORT + NUM_PEDALS; port++) {
-      analog[port - PEDAL_PORT] = new ResponsiveAnalogRead(port, sleepEnabled, snapMultiplier);
+  for (int port = PEDAL_BASE_PORT; port < PEDAL_BASE_PORT + NUM_PEDALS; port++) {
+      analog[port - PEDAL_BASE_PORT] = new ResponsiveAnalogRead(port, sleepEnabled, snapMultiplier);
   }
-  for (int index = 0; index < NUM_PEDALS; index++) { 
-    oldValue[index] = map2midi(readPedalWithSmoothing(PEDAL_PORT + index, analog[(int) index]));
+  for (int pedal = 0; pedal < NUM_PEDALS; pedal++) { 
+    oldValue[pedal] = map2midi(readPedalWithSmoothing(PEDAL_BASE_PORT + pedal, analog[(int) pedal]));
   }
 
 // Serial port
 
 // Set MIDI baud rate:
   Serial.begin(31250);
-#ifdef DEBUG
-  Serial.begin(115200);
-  Serial.println("Setup finished\n");
-#endif
+
+  prepareInterrupts();
 }
 
 // Main loop
 
+#ifdef DEBUG
 
 void loop() {
-#ifdef DEBUG
-  testAllLeds(10, 100, true);
-#else
+  testAllLeds(10, 100, false);
+
   static int value[NUM_PEDALS];
-  for (int index = 0; index < NUM_PEDALS; index++) { 
-    value[index] = map2midi(readPedalWithSmoothing(PEDAL_PORT + index, analog[(int) index]));
-    if (value[index] != oldValue[index]) {
-      oldValue[index] = value[index];
-#ifdef DEBUG
-      Serial.print(index);
-      Serial.print(" ");
-      Serial.println(value[index]);
-#endif
+  for (int pedal = 0; pedal < NUM_PEDALS; pedal++) { 
+    value[pedal] = map2midi(readPedalWithSmoothing(PEDAL_BASE_PORT + pedal, analog[(int) pedal]));
+    // Send the value of the controller to the midi channel corresponding to the pedal.
+    generateEvent(MIDI_BASE_CHANNEL + pedal, CONTROLLER_BASE_NUMBER + pedal, value[pedal]);
+    flashCntrlLed(MIDI_LED_BASE_PORT + pedal, 1, 1);
+    delay(1000);
+  }
+  delay(1000);
+}
+
+#else
+
+void loop() {
+  static int value[NUM_PEDALS];
+  for (int pedal = 0; pedal < NUM_PEDALS; pedal++) { 
+    value[pedal] = map2midi(readPedalWithSmoothing(PEDAL_BASE_PORT + pedal, analog[(int) pedal]));
+    if (value[pedal] != oldValue[pedal]) {
+      oldValue[pedal] = value[pedal];
       // Send the value of the controller to the midi channel corresponding to the pedal.
-      generateEvent(MIDI_BASE_CHANNEL + index, CONTROLLER_BASE_NUMBER + index, value[index]);
-      flashCntrlLed(cntrLed0 + index, 1, 1);
+      generateEvent(MIDI_BASE_CHANNEL + pedal, CONTROLLER_BASE_NUMBER + pedal, value[pedal]);
+      flashCntrlLed(MIDI_LED_BASE_PORT + pedal, 1, 1);
     }
   }
   delay(10);
-#endif // DEBUG
 }
+
+#endif
