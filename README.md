@@ -8,13 +8,12 @@ Each pedal produces its own midi control data. See table below:
     :widths: 25 25 50
     :header-rows: 2
 
-* - pedal number
-* - midi channel
-* - controller number
-* - pedal-1     1       20
-* - pedal-2     2       21
-* - pedal-3     3       22
-* - pedal-4     4       23
+| pedal number | midi channel | controller number |
+| ------------ | ------------ | ----------------- |
+| pedal-1 | 1 | 20 |
+| pedal-2 | 2 | 21 |
+| pedal-3 | 3 | 22 |
+| pedal-4 | 4 | 23 |
 
 
 The code was written for an Arduino Nano, but should run on most Arduinos.
