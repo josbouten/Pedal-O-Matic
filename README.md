@@ -1,16 +1,20 @@
 Pedal-O-Matic
 
 This project contains schematics in KiCad format for Pedal-O-Matic, a quad foot pedal to midi and CV converter.
-Pedal-O-Matic can prodice CV-values in the range of 0V to 5 Volt and from -5V to 5V. Each pedal has its own input and CV-output.
+Pedal-O-Matic can produce CV-values in the range of 0V to 5 Volt and from -5V to 5V. Each pedal has its own input and CV-output.
 Each pedal produces its own midi control data. See table below:
 
-pedal    midi    controller
-number   channel number
----------------------------
-pedal-1     1       20
-pedal-2     2       21
-pedal-3     3       22
-pedal-4     4       23
+.. list-table: channel and number
+    :widths: 25 25 50
+    :header-rows: 2
+
+* - pedal number
+* - midi channel
+* - controller number
+* - pedal-1     1       20
+* - pedal-2     2       21
+* - pedal-3     3       22
+* - pedal-4     4       23
 
 
 The code was written for an Arduino Nano, but should run on most Arduinos.
